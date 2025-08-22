@@ -1,12 +1,3 @@
-/* MQTT（基于 TCP）示例
-
-   此示例代码属于公共领域（或根据您的选择，采用 CC0 许可）。
-
-   除非适用法律要求或书面同意，否则
-   本软件按“原样”分发，不附带任何明示或
-   暗示的保证或条件。
-*/
-
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
@@ -20,28 +11,26 @@
 #include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "freertos/queue.h"
 #include "esp_mac.h"
 #include "cJSON.h"
 
 #include "esp_log.h"
 #include "mqtt_client.h"
 
-static const char *TAG = "mqtt_example";
+static const char *TAG = "mqtt_report";
 
 // MQTT主题定义
 #define MQTT_SUBSCRIBE_TOPIC_PREFIX "/public/striped-kind-tiger/result/"
 #define MQTT_PUBLISH_TOPIC "/public/striped-kind-tiger/invoke/"
 #define MQTT_LAST_WILL_TOPIC "/device/end"
 
-// GPIO定义
+// GPIO定义 - BOOT按钮
 #define BOOT_BUTTON_GPIO 0
 #define GPIO_INPUT_PIN_SEL (1ULL << BOOT_BUTTON_GPIO)
 
 // 全局变量
 static char device_id[32];
 static esp_mqtt_client_handle_t mqtt_client;
-static QueueHandle_t gpio_evt_queue = NULL;
 static int message_received_count = 0;
 
 // 函数声明
@@ -107,136 +96,124 @@ static void process_server_response(const char* topic, const char* data, int dat
 {
     message_received_count++; // 增加消息计数
     
-    printf("\n===========================================\n");
-    printf("🔥🔥🔥 强制输出：收到服务器返回消息 #%d 🔥🔥🔥\n", message_received_count);
-    printf("===========================================\n");
-    
-    ESP_LOGI(TAG, "🎯 处理服务器响应开始");
-    ESP_LOGI(TAG, "📍 主题: %s", topic ? topic : "NULL");
-    ESP_LOGI(TAG, "📊 数据长度: %d", data_len);
+    // 识别消息类型
+    const char* message_type = "普通消息";
+    if (topic) {
+        if (strncmp(topic, MQTT_SUBSCRIBE_TOPIC_PREFIX, strlen(MQTT_SUBSCRIBE_TOPIC_PREFIX)) == 0) {
+            message_type = "服务器响应消息";
+        } else if (strcmp(topic, MQTT_LAST_WILL_TOPIC) == 0) {
+            message_type = "遗嘱消息";
+        } else if (strncmp(topic, MQTT_PUBLISH_TOPIC, strlen(MQTT_PUBLISH_TOPIC)) == 0) {
+            message_type = "发布消息回显";
+        }
+    }
     
     if (!data || data_len <= 0) {
-        ESP_LOGE(TAG, "❌ 数据为空或长度无效 - data=%p, len=%d", data, data_len);
         printf("❌ 错误：服务器返回数据为空！\n");
-        printf("===========================================\n");
         return;
     }
-    
-    // 强制打印原始数据
-    printf("📦 服务器原始数据 (%d字节): ", data_len);
-    for (int i = 0; i < data_len; i++) {
-        printf("%c", data[i]);
-    }
-    printf("\n");
     
     // 创建以null结尾的字符串
     char *data_buffer = malloc(data_len + 1);
     if (!data_buffer) {
-        ESP_LOGE(TAG, "❌ 内存分配失败 - 需要 %d 字节", data_len + 1);
         printf("❌ 错误：内存分配失败！\n");
-        printf("===========================================\n");
         return;
     }
     
     memcpy(data_buffer, data, data_len);
     data_buffer[data_len] = '\0';
     
-    printf("📝 处理后的数据: %s\n", data_buffer);
-    ESP_LOGI(TAG, "📝 字符串形式数据: %s", data_buffer);
+    printf("📨 收到%s: %s\n", message_type, data_buffer);
     
-    // 打印数据的十六进制表示
-    printf("🔍 数据十六进制表示: ");
-    for (int i = 0; i < data_len; i++) {
-        printf("%02X ", (unsigned char)data[i]);
-    }
-    printf("\n");
+    // // 打印数据的十六进制表示
+    // printf("🔍 数据十六进制表示: ");
+    // for (int i = 0; i < data_len; i++) {
+    //     printf("%02X ", (unsigned char)data[i]);
+    // }
+    // printf("\n");
     
-    // 尝试解析JSON
-    printf("🔧 尝试解析JSON...\n");
-    cJSON *json = cJSON_Parse(data_buffer);
-    if (json) {
-        printf("✅ JSON解析成功！\n");
-        ESP_LOGI(TAG, "✅ JSON解析成功");
+    // // 尝试解析JSON
+    // printf("🔧 尝试解析JSON...\n");
+    // cJSON *json = cJSON_Parse(data_buffer);
+    // if (json) {
+    //     printf("✅ JSON解析成功！\n");
+    //     ESP_LOGI(TAG, "✅ JSON解析成功");
         
-        // 打印格式化的JSON
-        char *formatted_json = cJSON_Print(json);
-        if (formatted_json) {
-            printf("📋 格式化JSON:\n%s\n", formatted_json);
-            ESP_LOGI(TAG, "📋 格式化JSON:\n%s", formatted_json);
-            free(formatted_json);
-        }
+    //     // 打印格式化的JSON
+    //     char *formatted_json = cJSON_Print(json);
+    //     if (formatted_json) {
+    //         printf("📋 格式化JSON:\n%s\n", formatted_json);
+    //         ESP_LOGI(TAG, "📋 格式化JSON:\n%s", formatted_json);
+    //         free(formatted_json);
+    //     }
         
-        // 解析各个字段
-        cJSON *deviceId = cJSON_GetObjectItem(json, "deviceId");
-        cJSON *type = cJSON_GetObjectItem(json, "type");
-        cJSON *command = cJSON_GetObjectItem(json, "command");
-        cJSON *data_field = cJSON_GetObjectItem(json, "data");
-        cJSON *status = cJSON_GetObjectItem(json, "status");
-        cJSON *message = cJSON_GetObjectItem(json, "message");
+    //     // 解析各个字段
+    //     cJSON *deviceId = cJSON_GetObjectItem(json, "deviceId");
+    //     cJSON *type = cJSON_GetObjectItem(json, "type");
+    //     cJSON *command = cJSON_GetObjectItem(json, "command");
+    //     cJSON *data_field = cJSON_GetObjectItem(json, "data");
+    //     cJSON *status = cJSON_GetObjectItem(json, "status");
+    //     cJSON *message = cJSON_GetObjectItem(json, "message");
         
-        printf("🏷️  解析字段:\n");
+    //     printf("🏷️  解析字段:\n");
         
-        if (cJSON_IsString(deviceId)) {
-            printf("   📱 设备ID: %s\n", deviceId->valuestring);
-            ESP_LOGI(TAG, "📱 设备ID: %s", deviceId->valuestring);
-        }
+    //     if (cJSON_IsString(deviceId)) {
+    //         printf("   📱 设备ID: %s\n", deviceId->valuestring);
+    //         ESP_LOGI(TAG, "📱 设备ID: %s", deviceId->valuestring);
+    //     }
         
-        if (cJSON_IsString(type)) {
-            printf("   🏷️  类型: %s\n", type->valuestring);
-            ESP_LOGI(TAG, "🏷️  类型: %s", type->valuestring);
-        }
+    //     if (cJSON_IsString(type)) {
+    //         printf("   🏷️  类型: %s\n", type->valuestring);
+    //         ESP_LOGI(TAG, "🏷️  类型: %s", type->valuestring);
+    //     }
         
-        if (cJSON_IsString(command)) {
-            printf("   🎯 命令: %s\n", command->valuestring);
-            ESP_LOGI(TAG, "🎯 命令: %s", command->valuestring);
-            handle_server_command(command->valuestring, json);
-        }
+    //     if (cJSON_IsString(command)) {
+    //         printf("   🎯 命令: %s\n", command->valuestring);
+    //         ESP_LOGI(TAG, "🎯 命令: %s", command->valuestring);
+    //         handle_server_command(command->valuestring, json);
+    //     }
         
-        if (data_field) {
-            char *data_str = cJSON_Print(data_field);
-            if (data_str) {
-                printf("   📊 数据字段: %s\n", data_str);
-                ESP_LOGI(TAG, "📊 数据字段: %s", data_str);
-                free(data_str);
-            }
-        }
+    //     if (data_field) {
+    //         char *data_str = cJSON_Print(data_field);
+    //         if (data_str) {
+    //             printf("   📊 数据字段: %s\n", data_str);
+    //             ESP_LOGI(TAG, "📊 数据字段: %s", data_str);
+    //             free(data_str);
+    //         }
+    //     }
         
-        if (cJSON_IsString(status)) {
-            printf("   📈 状态: %s\n", status->valuestring);
-            ESP_LOGI(TAG, "📈 状态: %s", status->valuestring);
-        }
+    //     if (cJSON_IsString(status)) {
+    //         printf("   📈 状态: %s\n", status->valuestring);
+    //         ESP_LOGI(TAG, "📈 状态: %s", status->valuestring);
+    //     }
         
-        if (cJSON_IsString(message)) {
-            printf("   💬 消息: %s\n", message->valuestring);
-            ESP_LOGI(TAG, "💬 消息: %s", message->valuestring);
-        }
+    //     if (cJSON_IsString(message)) {
+    //         printf("   💬 消息: %s\n", message->valuestring);
+    //         ESP_LOGI(TAG, "💬 消息: %s", message->valuestring);
+    //     }
         
-        cJSON_Delete(json);
-    } else {
-        printf("⚠️  JSON解析失败，当作普通文本处理\n");
-        ESP_LOGW(TAG, "⚠️  JSON解析失败，当作普通文本处理");
-        printf("📄 纯文本内容: %s\n", data_buffer);
-        ESP_LOGI(TAG, "📄 纯文本内容: %s", data_buffer);
+    //     cJSON_Delete(json);
+    // } else {
+    //     printf("⚠️  JSON解析失败，当作普通文本处理\n");
+    //     ESP_LOGW(TAG, "⚠️  JSON解析失败，当作普通文本处理");
+    //     printf("📄 纯文本内容: %s\n", data_buffer);
+    //     ESP_LOGI(TAG, "📄 纯文本内容: %s", data_buffer);
         
-        // 尝试作为键值对解析
-        if (strstr(data_buffer, "deviceId=") || strstr(data_buffer, "type=")) {
-            printf("🔍 检测到键值对格式\n");
-            ESP_LOGI(TAG, "🔍 检测到键值对格式，可能需要转换为JSON");
-        }
+    //     // 尝试作为键值对解析
+    //     if (strstr(data_buffer, "deviceId=") || strstr(data_buffer, "type=")) {
+    //         printf("🔍 检测到键值对格式\n");
+    //         ESP_LOGI(TAG, "🔍 检测到键值对格式，可能需要转换为JSON");
+    //     }
         
-        // 检查cJSON错误
-        const char *error_ptr = cJSON_GetErrorPtr();
-        if (error_ptr != NULL) {
-            printf("❌ cJSON错误: %s\n", error_ptr);
-            ESP_LOGE(TAG, "❌ cJSON错误: %s", error_ptr);
-        }
-    }
+    //     // 检查cJSON错误
+    //     const char *error_ptr = cJSON_GetErrorPtr();
+    //     if (error_ptr != NULL) {
+    //         printf("❌ cJSON错误: %s\n", error_ptr);
+    //         ESP_LOGE(TAG, "❌ cJSON错误: %s", error_ptr);
+    //     }
+    // }
     
     free(data_buffer);
-    printf("===========================================\n");
-    printf("✅ 服务器消息处理完成\n");
-    printf("===========================================\n\n");
-    ESP_LOGI(TAG, "✅ 消息处理完成");
 }
 
 /**
@@ -280,85 +257,140 @@ static void handle_server_command(const char* command, cJSON* json_data)
 }
 
 /**
- * @brief BOOT按钮中断服务例程
- */
-static void IRAM_ATTR gpio_isr_handler(void* arg)
-{
-    uint32_t gpio_num = (uint32_t) arg;
-    xQueueSendFromISR(gpio_evt_queue, &gpio_num, NULL);
-}
-
-/**
- * @brief GPIO任务处理函数
+ * @brief BOOT按钮轮询任务（无中断）
  * 
- * 处理BOOT按钮按下事件，发布MQTT消息
+ * 处理BOOT按钮按下事件：
+ * - 短按：订阅主题
+ * - 长按：发布MQTT消息
  */
-static void gpio_task(void* arg)
+static void button_poll_task(void* arg)
 {
-    uint32_t io_num;
+    TickType_t last_operation_time = 0;
+    const TickType_t min_operation_interval = pdMS_TO_TICKS(3000); // 3秒最小间隔，防止重复触发
+    bool last_button_state = true; // GPIO0默认高电平（上拉）
+    
+    printf("🔘 按钮轮询任务启动\n");
+    
     for(;;) {
-        if(xQueueReceive(gpio_evt_queue, &io_num, portMAX_DELAY)) {
-            if (io_num == BOOT_BUTTON_GPIO) {
-                // 防抖延时
-                vTaskDelay(50 / portTICK_PERIOD_MS);
+        // 每50ms检查一次按钮状态
+        vTaskDelay(50 / portTICK_PERIOD_MS);
+        
+        bool current_button_state = gpio_get_level(BOOT_BUTTON_GPIO);
+        
+        // 检测按钮按下（从高到低的跳变）
+        if (last_button_state == true && current_button_state == false) {
+            TickType_t current_time = xTaskGetTickCount();
+            
+            // 检查是否在最小间隔内，防止重复触发
+            if (current_time - last_operation_time < min_operation_interval) {
+                last_button_state = current_button_state;
+                continue;
+            }
+            
+            printf("🔘 按钮按下，检测按压时间...\n");
+            
+            // 防抖延时
+            vTaskDelay(30 / portTICK_PERIOD_MS);
+            
+            // 再次确认按钮确实被按下
+            if (gpio_get_level(BOOT_BUTTON_GPIO) == 0) {
+                TickType_t press_start_time = xTaskGetTickCount();
                 
-                // 检查按钮是否仍然按下
-                if (gpio_get_level(BOOT_BUTTON_GPIO) == 0) {
-                    ESP_LOGI(TAG, "BOOT按钮被按下，发布MQTT消息");
+                // 等待按钮释放，同时计算按压时间
+                while(gpio_get_level(BOOT_BUTTON_GPIO) == 0) {
+                    vTaskDelay(10 / portTICK_PERIOD_MS);
+                    TickType_t current_press_time = xTaskGetTickCount();
                     
-                    char *message = create_mqtt_message();
-                    if (message && mqtt_client) {
-                        ESP_LOGI(TAG, "准备发布按钮触发的消息到主题: %s", MQTT_PUBLISH_TOPIC);
-                        ESP_LOGI(TAG, "消息内容: %s", message);
-                        ESP_LOGI(TAG, "消息长度: %d 字节", strlen(message));
-                        
-                        int msg_id = esp_mqtt_client_publish(mqtt_client, MQTT_PUBLISH_TOPIC, message, strlen(message), 1, 0);
-                        if (msg_id >= 0) {
-                            ESP_LOGI(TAG, "✅ 发布消息成功，msg_id=%d", msg_id);
-                        } else {
-                            ESP_LOGE(TAG, "❌ 发布消息失败，错误码=%d", msg_id);
-                        }
-                        free(message);
-                    } else {
-                        ESP_LOGE(TAG, "❌ 无法发布消息 - message=%p, mqtt_client=%p", message, mqtt_client);
+                    // 防止无限等待（最大3秒）
+                    if ((current_press_time - press_start_time) > pdMS_TO_TICKS(3000)) {
+                        printf("⚠️ 按钮长时间按下，跳过处理\n");
+                        break;
                     }
                 }
                 
-                // 等待按钮释放
-                while(gpio_get_level(BOOT_BUTTON_GPIO) == 0) {
-                    vTaskDelay(10 / portTICK_PERIOD_MS);
+                TickType_t press_end_time = xTaskGetTickCount();
+                int press_time_ms = (press_end_time - press_start_time) * portTICK_PERIOD_MS;
+                
+                last_operation_time = current_time;
+                
+                printf("🔘 按钮释放，按压时间: %d毫秒\n", press_time_ms);
+                
+                if (press_time_ms >= 1000) {
+                    // 长按：发布消息
+                    printf("🔘 长按检测到，发布消息\n");
+                    
+                    char *message = create_mqtt_message();
+                    if (message && mqtt_client) {
+                        int msg_id = esp_mqtt_client_publish(mqtt_client, MQTT_PUBLISH_TOPIC, message, strlen(message), 1, 0);
+                        if (msg_id >= 0) {
+                            printf("📤 消息发布成功\n");
+                        } else {
+                            printf("❌ 消息发布失败\n");
+                        }
+                        free(message);
+                    }
+                } else if (press_time_ms >= 50) { // 至少50ms才算有效按键
+                    // 短按：先退出房间(发布遗嘱消息)，再加入房间(订阅主题)
+                    printf("🔘 短按检测到，执行退出→加入房间流程\n");
+                    
+                    if (mqtt_client) {
+                        // 步骤1：先发布遗嘱消息，表示退出房间
+                        printf("⚰️ 步骤1: 发布遗嘱消息(退出房间)\n");
+                        char *will_message = create_mqtt_message();
+                        if (will_message) {
+                            int will_msg_id = esp_mqtt_client_publish(mqtt_client, MQTT_LAST_WILL_TOPIC, will_message, strlen(will_message), 1, 0);
+                            if (will_msg_id >= 0) {
+                                printf("✅ 遗嘱消息发布成功(已退出房间)\n");
+                            } else {
+                                printf("❌ 遗嘱消息发布失败\n");
+                            }
+                            free(will_message);
+                        }
+                        
+                        // 小延时，确保遗嘱消息先发送
+                        vTaskDelay(100 / portTICK_PERIOD_MS);
+                        
+                        // 步骤2：订阅主题，表示加入房间
+                        printf("🏠 步骤2: 订阅主题(加入房间)\n");
+                        char subscribe_topic[128];
+                        snprintf(subscribe_topic, sizeof(subscribe_topic), "%s%s", MQTT_SUBSCRIBE_TOPIC_PREFIX, device_id);
+                        
+                        printf("📡 订阅服务器响应主题: %s\n", subscribe_topic);
+                        
+                        int msg_id = esp_mqtt_client_subscribe(mqtt_client, subscribe_topic, 1);
+                        if (msg_id >= 0) {
+                            printf("✅ 主题订阅成功(已加入房间)，等待服务器响应\n");
+                        } else {
+                            printf("❌ 主题订阅失败\n");
+                        }
+                    }
                 }
             }
         }
+        
+        last_button_state = current_button_state;
     }
 }
 
 /**
- * @brief 初始化GPIO和按钮中断
+ * @brief 初始化GPIO（无中断方式）
  */
 static void init_gpio(void)
 {
     gpio_config_t io_conf = {};
     
-    // 配置BOOT按钮（GPIO0）为输入，带上拉
-    io_conf.intr_type = GPIO_INTR_NEGEDGE;  // 下降沿触发
+    // 配置BOOT按钮（GPIO0）为输入，带上拉，无中断
+    io_conf.intr_type = GPIO_INTR_DISABLE;  // 完全禁用中断
     io_conf.pin_bit_mask = GPIO_INPUT_PIN_SEL;
     io_conf.mode = GPIO_MODE_INPUT;
     io_conf.pull_up_en = 1;
     io_conf.pull_down_en = 0;
     gpio_config(&io_conf);
     
-    // 创建GPIO事件队列
-    gpio_evt_queue = xQueueCreate(10, sizeof(uint32_t));
+    // 创建按钮轮询任务（无中断）
+    xTaskCreate(button_poll_task, "button_poll", 4096, NULL, 5, NULL);
     
-    // 创建GPIO任务
-    xTaskCreate(gpio_task, "gpio_task", 2048, NULL, 10, NULL);
-    
-    // 安装GPIO中断服务
-    gpio_install_isr_service(0);
-    gpio_isr_handler_add(BOOT_BUTTON_GPIO, gpio_isr_handler, (void*) BOOT_BUTTON_GPIO);
-    
-    ESP_LOGI(TAG, "GPIO初始化完成，BOOT按钮配置在GPIO%d", BOOT_BUTTON_GPIO);
+    printf("🔘 BOOT按钮轮询模式已配置在GPIO%d\n", BOOT_BUTTON_GPIO);
 }
 
 static void log_error_if_nonzero(const char *message, int error_code)
@@ -387,105 +419,39 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
     
     switch ((esp_mqtt_event_id_t)event_id) {
     case MQTT_EVENT_CONNECTED:
-        printf("\n🎉🎉🎉 MQTT连接成功！🎉🎉🎉\n");
-        ESP_LOGI(TAG, "MQTT连接成功");
-        
-        // 构建订阅主题：/public/striped-kind-tiger/result/ + 设备ID
-        char subscribe_topic[128];
-        snprintf(subscribe_topic, sizeof(subscribe_topic), "%s%s", MQTT_SUBSCRIBE_TOPIC_PREFIX, device_id);
-        
-        printf("📡 准备订阅主题: %s\n", subscribe_topic);
-        ESP_LOGI(TAG, "📡 准备订阅主题: %s", subscribe_topic);
-        
-        // 自动订阅指定主题
-        msg_id = esp_mqtt_client_subscribe(client, subscribe_topic, 1);
-        if (msg_id >= 0) {
-            printf("✅ 订阅请求发送成功，msg_id=%d\n", msg_id);
-            ESP_LOGI(TAG, "✅ 订阅请求发送成功: %s, msg_id=%d", subscribe_topic, msg_id);
-        } else {
-            printf("❌ 订阅请求发送失败，错误码=%d\n", msg_id);
-            ESP_LOGE(TAG, "❌ 订阅请求发送失败: %s, 错误码=%d", subscribe_topic, msg_id);
-        }
-        
-        // 发布设备上线消息
-        char *online_message = create_mqtt_message();
-        if (online_message) {
-            printf("📤 准备发布设备上线消息到主题: %s\n", MQTT_PUBLISH_TOPIC);
-            printf("📝 上线消息内容: %s\n", online_message);
-            ESP_LOGI(TAG, "准备发布设备上线消息到主题: %s", MQTT_PUBLISH_TOPIC);
-            ESP_LOGI(TAG, "上线消息内容: %s", online_message);
-            
-            msg_id = esp_mqtt_client_publish(client, MQTT_PUBLISH_TOPIC, online_message, strlen(online_message), 1, 0);
-            if (msg_id >= 0) {
-                printf("✅ 设备上线消息发布成功，msg_id=%d\n", msg_id);
-                ESP_LOGI(TAG, "✅ 设备上线消息发布成功，msg_id=%d", msg_id);
-            } else {
-                printf("❌ 设备上线消息发布失败，错误码=%d\n", msg_id);
-                ESP_LOGE(TAG, "❌ 设备上线消息发布失败，错误码=%d", msg_id);
-            }
-            free(online_message);
-        }
-        printf("🔔 等待服务器返回消息...\n\n");
+        printf("🎉 MQTT连接成功！\n");
+        printf("🔘 短按BOOT键: 退出房间→加入房间（先发遗嘱消息，再订阅主题）\n");
+        printf("🔘 长按BOOT键: 在房间内发布消息\n");
         
         break;
         
     case MQTT_EVENT_DISCONNECTED:
-        printf("💔 MQTT连接断开！\n");
-        ESP_LOGI(TAG, "MQTT连接断开");
+        printf("💔 MQTT连接断开\n");
         break;
 
     case MQTT_EVENT_SUBSCRIBED:
-        printf("🎯 主题订阅成功！msg_id=%d\n", event->msg_id);
-        printf("✅ 现在可以接收服务器返回的消息了\n");
-        ESP_LOGI(TAG, "主题订阅成功, msg_id=%d", event->msg_id);
-        break;
+        break; // 静默处理订阅成功
         
     case MQTT_EVENT_UNSUBSCRIBED:
-        printf("📤 取消订阅成功, msg_id=%d\n", event->msg_id);
-        ESP_LOGI(TAG, "取消订阅成功, msg_id=%d", event->msg_id);
-        break;
+        break; // 静默处理取消订阅
         
     case MQTT_EVENT_PUBLISHED:
-        printf("📡 消息发布成功, msg_id=%d\n", event->msg_id);
-        ESP_LOGI(TAG, "消息发布成功, msg_id=%d", event->msg_id);
+        printf("📡 消息发布确认\n");
         break;
         
     case MQTT_EVENT_DATA:
-        ESP_LOGI(TAG, "🔔 收到MQTT消息事件!");
-        ESP_LOGI(TAG, "📊 消息统计 - 主题长度: %d, 数据长度: %d", event->topic_len, event->data_len);
-        
-        if (event->topic_len <= 0) {
-            ESP_LOGE(TAG, "❌ 主题长度无效: %d", event->topic_len);
-            break;
-        }
-        
-        if (event->data_len <= 0) {
-            ESP_LOGE(TAG, "❌ 数据长度无效: %d", event->data_len);
-            break;
-        }
-        
-        // 创建主题字符串
-        char *topic_buffer = malloc(event->topic_len + 1);
-        if (topic_buffer) {
-            memcpy(topic_buffer, event->topic, event->topic_len);
-            topic_buffer[event->topic_len] = '\0';
-            
-            ESP_LOGI(TAG, "📝 原始主题内容: %s", topic_buffer);
-            
-            // 直接打印原始数据（防止非null结尾字符串）
-            ESP_LOGI(TAG, "📦 原始数据内容 (%d字节):", event->data_len);
-            printf(">>> ");
-            for (int i = 0; i < event->data_len; i++) {
-                printf("%c", event->data[i]);
+        if (event->topic_len > 0 && event->data_len > 0) {
+            // 创建主题字符串
+            char *topic_buffer = malloc(event->topic_len + 1);
+            if (topic_buffer) {
+                memcpy(topic_buffer, event->topic, event->topic_len);
+                topic_buffer[event->topic_len] = '\0';
+                
+                // 使用新的处理函数
+                process_server_response(topic_buffer, event->data, event->data_len);
+                
+                free(topic_buffer);
             }
-            printf(" <<<\n");
-            
-            // 使用新的处理函数
-            process_server_response(topic_buffer, event->data, event->data_len);
-            
-            free(topic_buffer);
-        } else {
-            ESP_LOGE(TAG, "❌ 内存分配失败，无法处理消息 - 需要 %d 字节", event->topic_len + 1);
         }
         break;
         
@@ -510,31 +476,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
  *
  *  此函数初始化 MQTT 客户端并启动事件循环。
  */
-/**
- * @brief 发送遗嘱消息（设备离线通知）
- */
-static void send_last_will_message(void)
-{
-    if (mqtt_client) {
-        char *last_will_message = create_mqtt_message();
-        if (last_will_message) {
-            ESP_LOGI(TAG, "准备发送遗嘱消息到主题: %s", MQTT_LAST_WILL_TOPIC);
-            ESP_LOGI(TAG, "遗嘱消息内容: %s", last_will_message);
-            ESP_LOGI(TAG, "遗嘱消息长度: %d 字节", strlen(last_will_message));
-            
-            int msg_id = esp_mqtt_client_publish(mqtt_client, MQTT_LAST_WILL_TOPIC, last_will_message, strlen(last_will_message), 1, 0);
-            if (msg_id >= 0) {
-                ESP_LOGI(TAG, "✅ 发送遗嘱消息成功，msg_id=%d", msg_id);
-            } else {
-                ESP_LOGE(TAG, "❌ 发送遗嘱消息失败，错误码=%d", msg_id);
-            }
-            free(last_will_message);
-            
-            // 等待消息发送完成
-            vTaskDelay(100 / portTICK_PERIOD_MS);
-        }
-    }
-}
+// 注意：遗嘱消息由MQTT broker在设备意外断线时自动发送，无需手动发送函数
 
 /**
  * @brief 安全关机处理函数
@@ -545,8 +487,7 @@ static void safe_shutdown_handler(void)
 {
     ESP_LOGI(TAG, "执行安全关机程序...");
     
-    // 发送遗嘱消息
-    send_last_will_message();
+    // 注意：正常关机时不发送遗嘱消息，遗嘱消息只在意外断线时由MQTT broker自动发送
     
     // 断开MQTT连接
     if (mqtt_client) {
@@ -623,7 +564,7 @@ static void mqtt_app_start(void)
     esp_mqtt_client_register_event(mqtt_client, ESP_EVENT_ANY_ID, mqtt_event_handler, NULL);
     esp_mqtt_client_start(mqtt_client);
     
-    // 注册重启钩子函数，确保在重启前发送遗嘱消息
+    // 注册重启钩子函数，确保正常关机时清理资源（遗嘱消息仅在意外断线时自动发送）
     esp_register_shutdown_handler(safe_shutdown_handler);
     
     ESP_LOGI(TAG, "MQTT客户端启动完成");
@@ -639,53 +580,15 @@ static void mqtt_app_start(void)
  *
  *  此函数初始化系统并启动 MQTT 应用程序。
  */
-/**
- * @brief 监控任务 - 检查MQTT连接状态和消息计数
- */
-static void monitor_task(void* arg)
-{
-    static int heartbeat_count = 0;
-    
-    while(1) {
-        vTaskDelay(30000 / portTICK_PERIOD_MS); // 每30秒检查一次
-        
-        heartbeat_count++;
-        printf("\n💓 心跳检查 #%d (运行时间: %d分钟)\n", heartbeat_count, heartbeat_count/2);
-        printf("📊 统计信息:\n");
-        printf("   - 已处理服务器消息数: %d\n", message_received_count);
-        printf("   - 可用内存: %" PRIu32 " bytes\n", esp_get_free_heap_size());
-        printf("   - MQTT客户端状态: %s\n", mqtt_client ? "已初始化" : "未初始化");
-        printf("   - 设备ID: %s\n", device_id);
-        
-        if (message_received_count == 0 && heartbeat_count > 2) {
-            printf("⚠️  警告：设备启动超过1分钟但未收到服务器消息！\n");
-            printf("🔍 可能的原因：\n");
-            printf("   1. 服务器未向设备订阅的主题发送消息\n");
-            printf("   2. 订阅主题配置错误\n");
-            printf("   3. MQTT服务器连接问题\n");
-            printf("   4. 网络连接不稳定\n");
-            printf("💡 建议：尝试按下BOOT按钮发送测试消息\n");
-        }
-        
-        if (mqtt_client && message_received_count == 0) {
-            printf("🔔 提示：按下BOOT按钮发送测试消息到服务器\n");
-        }
-        printf("\n");
-    }
-}
+// 心跳检查功能已移除，保持输出简洁
 
 void app_main(void)
 {
-    printf("\n🚀🚀🚀 ESP32 MQTT 设备启动 🚀🚀🚀\n");
-    printf("===========================================\n");
-    
-    ESP_LOGI(TAG, "[APP] 应用程序启动...");
-    ESP_LOGI(TAG, "[APP] 可用内存: %" PRIu32 " bytes", esp_get_free_heap_size());
-    ESP_LOGI(TAG, "[APP] IDF版本: %s", esp_get_idf_version());
+    printf("\n🚀 ESP32 MQTT设备启动\n");
 
     esp_log_level_set("*", ESP_LOG_INFO);
     esp_log_level_set("mqtt_client", ESP_LOG_VERBOSE);
-    esp_log_level_set("mqtt_example", ESP_LOG_VERBOSE);
+    esp_log_level_set("mqtt_report", ESP_LOG_VERBOSE);
     esp_log_level_set("transport_base", ESP_LOG_VERBOSE);
     esp_log_level_set("esp-tls", ESP_LOG_VERBOSE);
     esp_log_level_set("transport", ESP_LOG_VERBOSE);
@@ -695,42 +598,21 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
 
-    printf("📶 正在建立网络连接...\n");
-    /* 
-     * 配置Wi-Fi或以太网连接（在menuconfig中选择）
-     * 详细信息请参阅examples/protocols/README.md中的"建立Wi-Fi或以太网连接"部分
-     */
     ESP_ERROR_CHECK(example_connect());
-    printf("✅ 网络连接成功！\n");
+    printf("📶 网络连接成功\n");
 
-    // 初始化GPIO和BOOT按钮
-    printf("🔘 初始化BOOT按钮...\n");
-    init_gpio();
-    
-    // 启动MQTT应用程序
-    printf("📡 启动MQTT客户端...\n");
+    // 延时确保网络稳定
+    vTaskDelay(pdMS_TO_TICKS(1000));
+
     mqtt_app_start();
     
-    // 创建监控任务
-    xTaskCreate(monitor_task, "monitor_task", 4096, NULL, 5, NULL);
+    // 等待MQTT稳定后再初始化GPIO（无中断轮询模式更安全）
+    vTaskDelay(pdMS_TO_TICKS(3000));
+    init_gpio();
     
-    printf("===========================================\n");
-    printf("✅ MQTT设备配置完成\n");
-    printf("===========================================\n");
-    printf("📋 功能说明:\n");
-    printf("1. 🔗 自动连接MQTT服务器并订阅主题\n");
-    printf("2. 🔘 按下BOOT按钮发布消息\n");
-    printf("3. 💬 实时显示服务器返回消息\n");
-    printf("4. 🔄 重启/关机前自动发送遗嘱消息\n");
-    printf("5. 🛡️ 安全回路保护确保消息发送\n");
-    printf("===========================================\n");
-    printf("🔔 等待MQTT连接和消息...\n\n");
-    
-    ESP_LOGI(TAG, "=== MQTT设备配置完成 ===");
-    ESP_LOGI(TAG, "功能说明:");
-    ESP_LOGI(TAG, "1. 自动连接MQTT服务器并订阅主题");
-    ESP_LOGI(TAG, "2. 按下BOOT按钮发布消息");
-    ESP_LOGI(TAG, "3. 重启/关机前自动发送遗嘱消息");
-    ESP_LOGI(TAG, "4. 安全回路保护确保消息发送");
-    ESP_LOGI(TAG, "=====================");
+    printf("✅ 设备配置完成\n");
+    printf("📖 使用说明:\n");
+    printf("   🔘 短按BOOT键(<1秒): 退出房间→加入房间\n");
+    printf("   🔘 长按BOOT键(>=1秒): 在房间内发布消息\n");
 }
+
