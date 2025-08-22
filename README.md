@@ -1,7 +1,9 @@
 # 鸽子对讲WebRTC客户端（已实现MQTT客户端）
 
 
-
+# 配置教程
+在 menuconfig 中配置wifi名称和密码 ， mqtts地址自定义
+配置型号参数 ， 构建烧录即可
 
 
 

@@ -419,9 +419,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
     
     switch ((esp_mqtt_event_id_t)event_id) {
     case MQTT_EVENT_CONNECTED:
-        printf("🎉 MQTT连接成功！\n");
-        printf("🔘 短按BOOT键: 退出房间→加入房间（先发遗嘱消息，再订阅主题）\n");
-        printf("🔘 长按BOOT键: 在房间内发布消息\n");
+        ESP_LOGI(TAG , "🎉 MQTT连接成功！\n");
         
         break;
         
@@ -611,7 +609,6 @@ void app_main(void)
     init_gpio();
     
     printf("✅ 设备配置完成\n");
-    printf("📖 使用说明:\n");
     printf("   🔘 短按BOOT键(<1秒): 退出房间→加入房间\n");
     printf("   🔘 长按BOOT键(>=1秒): 在房间内发布消息\n");
 }
