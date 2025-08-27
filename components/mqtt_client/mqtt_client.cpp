@@ -1,32 +1,6 @@
-#include <stdio.h>
-#include <stdint.h>
-#include <string.h>
-#include <stdlib.h>
-#include <inttypes.h>
-#include "esp_system.h"
-#include "nvs_flash.h"
-#include "esp_event.h"
-#include "esp_netif.h"
-#include "protocol_examples_common.h"
-#include "driver/gpio.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "esp_mac.h"
-#include "cJSON.h"
-
-#include "esp_log.h"
-#include "mqtt_client.h"
+#include "mqtt_client.hpp"
 
 static const char *TAG = "mqtt_report";
-
-// MQTT主题定义
-#define MQTT_SUBSCRIBE_TOPIC_PREFIX "/public/striped-kind-tiger/result/"
-#define MQTT_PUBLISH_TOPIC "/public/striped-kind-tiger/invoke/"
-#define MQTT_LAST_WILL_TOPIC "/device/end"
-
-// GPIO定义 - BOOT按钮
-#define BOOT_BUTTON_GPIO 0
-#define GPIO_INPUT_PIN_SEL (1ULL << BOOT_BUTTON_GPIO)
 
 // 全局变量
 static char device_id[32];
@@ -36,7 +10,6 @@ static int message_received_count = 0;
 // 函数声明
 static void handle_server_command(const char* command, cJSON* json_data);
 static void process_server_response(const char* topic, const char* data, int data_len);
-
 
 /**
  * @brief 生成设备唯一ID
@@ -114,7 +87,7 @@ static void process_server_response(const char* topic, const char* data, int dat
     }
     
     // 创建以null结尾的字符串
-    char *data_buffer = malloc(data_len + 1);
+    char *data_buffer = static_cast<char*>(malloc(data_len + 1));
     if (!data_buffer) {
         printf("❌ 错误：内存分配失败！\n");
         return;
@@ -383,8 +356,8 @@ static void init_gpio(void)
     io_conf.intr_type = GPIO_INTR_DISABLE;  // 完全禁用中断
     io_conf.pin_bit_mask = GPIO_INPUT_PIN_SEL;
     io_conf.mode = GPIO_MODE_INPUT;
-    io_conf.pull_up_en = 1;
-    io_conf.pull_down_en = 0;
+    io_conf.pull_up_en = GPIO_PULLUP_ENABLE;
+    io_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
     gpio_config(&io_conf);
     
     // 创建按钮轮询任务（无中断）
@@ -413,7 +386,7 @@ static void log_error_if_nonzero(const char *message, int error_code)
 static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data)
 {
     ESP_LOGD(TAG, "Event dispatched from event loop base=%s, event_id=%" PRIi32 "", base, event_id);
-    esp_mqtt_event_handle_t event = event_data;
+    esp_mqtt_event_handle_t event = static_cast<esp_mqtt_event_handle_t>(event_data);
     esp_mqtt_client_handle_t client = event->client;
     int msg_id;
     
@@ -440,7 +413,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
     case MQTT_EVENT_DATA:
         if (event->topic_len > 0 && event->data_len > 0) {
             // 创建主题字符串
-            char *topic_buffer = malloc(event->topic_len + 1);
+            char *topic_buffer = static_cast<char*>(malloc(event->topic_len + 1));
             if (topic_buffer) {
                 memcpy(topic_buffer, event->topic, event->topic_len);
                 topic_buffer[event->topic_len] = '\0';
@@ -504,19 +477,16 @@ static void mqtt_app_start(void)
     // 准备遗嘱消息
     char *last_will_message = create_mqtt_message();
     
-    esp_mqtt_client_config_t mqtt_cfg = {
-        .broker.address.uri = CONFIG_BROKER_URL,
-        .session.last_will = {
-            .topic = MQTT_LAST_WILL_TOPIC,
-            .msg = last_will_message,
-            .msg_len = last_will_message ? strlen(last_will_message) : 0,
-            .qos = 1,
-            .retain = 0,
-        },
-        .session.keepalive = 60,
-        .network.reconnect_timeout_ms = 5000,
-        .network.timeout_ms = 5000,
-    };
+    esp_mqtt_client_config_t mqtt_cfg = {};
+    mqtt_cfg.broker.address.uri = CONFIG_BROKER_URL;
+    mqtt_cfg.session.last_will.topic = MQTT_LAST_WILL_TOPIC;
+    mqtt_cfg.session.last_will.msg = last_will_message;
+    mqtt_cfg.session.last_will.msg_len = last_will_message ? strlen(last_will_message) : 0;
+    mqtt_cfg.session.last_will.qos = 1;
+    mqtt_cfg.session.last_will.retain = 0;
+    mqtt_cfg.session.keepalive = 60;
+    mqtt_cfg.network.reconnect_timeout_ms = 5000;
+    mqtt_cfg.network.timeout_ms = 5000;
 
 #if CONFIG_BROKER_URL_FROM_STDIN
     char line[128];
@@ -559,7 +529,7 @@ static void mqtt_app_start(void)
     }
 
     /* 注册MQTT事件处理程序 */
-    esp_mqtt_client_register_event(mqtt_client, ESP_EVENT_ANY_ID, mqtt_event_handler, NULL);
+    esp_mqtt_client_register_event(mqtt_client, static_cast<esp_mqtt_event_id_t>(ESP_EVENT_ANY_ID), mqtt_event_handler, NULL);
     esp_mqtt_client_start(mqtt_client);
     
     // 注册重启钩子函数，确保正常关机时清理资源（遗嘱消息仅在意外断线时自动发送）
@@ -573,6 +543,7 @@ static void mqtt_app_start(void)
     }
 }
 
+
 /*
  * @brief 应用程序的主入口点
  *
@@ -580,10 +551,9 @@ static void mqtt_app_start(void)
  */
 // 心跳检查功能已移除，保持输出简洁
 
-void app_main(void)
-{
+void mqtt_DoNow(){
     printf("\n🚀 ESP32 MQTT设备启动\n");
-
+    
     esp_log_level_set("*", ESP_LOG_INFO);
     esp_log_level_set("mqtt_client", ESP_LOG_VERBOSE);
     esp_log_level_set("mqtt_report", ESP_LOG_VERBOSE);
@@ -612,4 +582,3 @@ void app_main(void)
     printf("   🔘 短按BOOT键(<1秒): 退出房间→加入房间\n");
     printf("   🔘 长按BOOT键(>=1秒): 在房间内发布消息\n");
 }
-
