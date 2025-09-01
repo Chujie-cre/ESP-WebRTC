@@ -3,3 +3,9 @@ build/
 .vscode/
 dependencies.lock
 mqtt.html
+sdkconfig
+sdkconfig.ci
+sdkconfig.ci.p4_eppp
+sdkconfig.ci.p4_wifi
+sdkconfig.ci.ppp_connect
+sdkconfig.old
