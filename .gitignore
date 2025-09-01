@@ -1,3 +1,5 @@
 managed_components/
 build/
 .vscode/
+dependencies.lock
+mqtt.html

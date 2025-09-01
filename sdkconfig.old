@@ -561,7 +561,7 @@ CONFIG_PARTITION_TABLE_MD5=y
 #
 # Example Configuration
 #
-CONFIG_BROKER_URL="mqtts://8.tcp.cpolar.top:12238"
+CONFIG_BROKER_URL="mqtts://8.tcp.cpolar.top:13109"
 # end of Example Configuration
 
 #
